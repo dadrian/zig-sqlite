@@ -50,12 +50,12 @@ fn isZigString(comptime T: type) bool {
         if (ptr.is_volatile or ptr.is_allowzero) break :blk false;
 
         // If it's already a slice, simple check.
-        if (ptr.size == .Slice) {
+        if (ptr.size == .slice) {
             break :blk ptr.child == u8;
         }
 
         // Otherwise check if it's an array type that coerces to slice.
-        if (ptr.size == .One) {
+        if (ptr.size == .one) {
             const child = @typeInfo(ptr.child);
             if (child == .array) {
                 const arr = &child.array;
@@ -202,7 +202,7 @@ pub const Blob = struct {
     pub fn reopen(self: *Self, row: i64) ReopenError!void {
         const result = c.sqlite3_blob_reopen(self.handle, row);
         if (result != c.SQLITE_OK) {
-            return error.CannotReopenBlob;
+            return error.cannotReopenBlob;
         }
 
         self.size = c.sqlite3_blob_bytes(self.handle);
@@ -233,7 +233,7 @@ pub const Blob = struct {
         );
         if (result == c.SQLITE_MISUSE) debug.panic("sqlite misuse while opening a blob", .{});
         if (result != c.SQLITE_OK) {
-            return error.CannotOpenBlob;
+            return error.cannotOpenBlob;
         }
 
         blob.size = c.sqlite3_blob_bytes(blob.handle);
@@ -704,7 +704,7 @@ pub const Db = struct {
             user_ctx,
             null, // xFunc
             struct {
-                fn xStep(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.C) void {
+                fn xStep(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.c) void {
                     debug.assert(argc == real_args_len);
 
                     const sqlite_args = argv[0..real_args_len];
@@ -728,7 +728,7 @@ pub const Db = struct {
                 }
             }.xStep,
             struct {
-                fn xFinal(ctx: ?*c.sqlite3_context) callconv(.C) void {
+                fn xFinal(ctx: ?*c.sqlite3_context) callconv(.c) void {
                     var args: std.meta.ArgsTuple(@TypeOf(finalize_func)) = undefined;
 
                     // Pass the function context
@@ -780,7 +780,7 @@ pub const Db = struct {
             flags,
             null,
             struct {
-                fn xFunc(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.C) void {
+                fn xFunc(ctx: ?*c.sqlite3_context, argc: c_int, argv: [*c]?*c.sqlite3_value) callconv(.c) void {
                     debug.assert(argc == fn_info.params.len);
 
                     const sqlite_args = argv[0..fn_info.params.len];
@@ -880,7 +880,7 @@ pub const FunctionContext = struct {
     fn splitPtrTypes(comptime Type: type) SplitPtrTypes {
         switch (@typeInfo(Type)) {
             .pointer => |ptr_info| switch (ptr_info.size) {
-                .One => return SplitPtrTypes{
+                .one => return SplitPtrTypes{
                     .ValueType = ptr_info.child,
                     .PointerType = Type,
                 },
@@ -1211,7 +1211,7 @@ pub fn Iterator(comptime Type: type) type {
                         u8 => {
                             const size: usize = @intCast(c.sqlite3_column_bytes(self.stmt, i));
 
-                            if (arr.sentinel) |sentinel_ptr| {
+                            if (arr.sentinel_ptr) |sentinel_ptr| {
                                 // An array with a sentinel need to be as big as the data, + 1 byte for the sentinel.
                                 if (size >= @as(usize, arr.len)) {
                                     return error.ArrayTooSmall;
@@ -1268,7 +1268,7 @@ pub fn Iterator(comptime Type: type) type {
         fn dupeWithSentinel(comptime SliceType: type, allocator: mem.Allocator, data: []const u8) !SliceType {
             switch (@typeInfo(SliceType)) {
                 .pointer => |ptr_info| {
-                    if (ptr_info.sentinel) |sentinel_ptr| {
+                    if (ptr_info.sentinel_ptr) |sentinel_ptr| {
                         const sentinel = @as(*const ptr_info.child, @ptrCast(sentinel_ptr)).*;
 
                         const slice = try allocator.alloc(u8, data.len + 1);
@@ -1347,13 +1347,13 @@ pub fn Iterator(comptime Type: type) type {
             switch (@typeInfo(PointerType)) {
                 .pointer => |ptr| {
                     switch (ptr.size) {
-                        .One => {
+                        .one => {
                             ret = try options.allocator.create(ptr.child);
                             errdefer options.allocator.destroy(ret);
 
                             ret.* = try self.readField(ptr.child, options, i);
                         },
-                        .Slice => switch (ptr.child) {
+                        .slice => switch (ptr.child) {
                             u8 => ret = try self.readBytes(PointerType, options.allocator, i, .Text),
                             else => @compileError("cannot read pointer of type " ++ @typeName(PointerType)),
                         },
@@ -1466,14 +1466,14 @@ pub fn Iterator(comptime Type: type) type {
 
                             return std.meta.stringToEnum(FieldType, inner_value) orelse FieldType.default;
                         }
-                        if (@typeInfo(FieldType.BaseType) == .Int) {
+                        if (@typeInfo(FieldType.BaseType) == .int) {
                             return @enumFromInt(@as(TI.tag_type, @intCast(inner_value)));
                         }
                         @compileError("enum column " ++ @typeName(FieldType) ++ " must have a BaseType of either string or int");
                     },
                     inline .@"struct", .@"union" => |TI| {
                         if (TI.layout == .@"packed" and !@hasField(FieldType, "readField")) {
-                            const Backing = @Type(.{ .int = .{ .signedness = .unsigned, .bits = @bitSizeOf(FieldType) } });
+                            const Backing = @Int(.unsigned, @bitSizeOf(FieldType));
                             return @bitCast(try self.readInt(Backing, i));
                         }
 
@@ -1647,10 +1647,10 @@ pub const DynamicStatement = struct {
                     return convertResultToError(result);
                 },
                 .pointer => |ptr| switch (ptr.size) {
-                    .One => {
+                    .one => {
                         try self.bindField(ptr.child, options, field_name, i, field.*);
                     },
-                    .Slice => switch (ptr.child) {
+                    .slice => switch (ptr.child) {
                         u8 => {
                             // NOTE(vincent): The slice must live until after the prepared statement is finaliuzed, therefore we use SQLITE_STATIC to avoid a copy
                             const result = c.sqlite3_bind_text(self.stmt, column, field.ptr, @intCast(field.len), c.SQLITE_STATIC);
@@ -1683,7 +1683,7 @@ pub const DynamicStatement = struct {
                 .@"enum" => {
                     if (comptime isZigString(FieldType.BaseType)) {
                         try self.bindField(FieldType.BaseType, options, field_name, i, @tagName(field));
-                    } else if (@typeInfo(FieldType.BaseType) == .Int) {
+                    } else if (@typeInfo(FieldType.BaseType) == .int) {
                         try self.bindField(FieldType.BaseType, options, field_name, i, @intFromEnum(field));
                     } else {
                         @compileError("enum column " ++ @typeName(FieldType) ++ " must have a BaseType of either string or int to bind");
@@ -1704,7 +1704,7 @@ pub const DynamicStatement = struct {
                 },
                 .@"union" => |info| {
                     if (info.layout == .@"packed") {
-                        const Backing = @Type(.{ .int = .{ .signedness = .unsigned, .bits = @bitSizeOf(FieldType) } });
+                        const Backing = @Int(.unsigned, @bitSizeOf(FieldType));
                         try self.bindField(Backing, options, field_name, i, @as(Backing, @bitCast(field)));
                         return;
                     }
@@ -1779,7 +1779,7 @@ pub const DynamicStatement = struct {
             },
             .pointer => |PointerTypeInfo| {
                 switch (PointerTypeInfo.size) {
-                    .Slice => {
+                    .slice => {
                         for (values, 0..) |value_to_bind, index| {
                             try self.bindField(PointerTypeInfo.child, options, "unknown", @intCast(index), value_to_bind);
                         }
@@ -1970,7 +1970,7 @@ pub const DynamicStatement = struct {
     pub fn all(self: *Self, comptime Type: type, allocator: mem.Allocator, options: QueryOptions, values: anytype) ![]Type {
         var iter = try self.iteratorAlloc(Type, allocator, values);
 
-        var rows = std.ArrayList(Type).init(allocator);
+        var rows = std.array_list.Managed(Type).init(allocator);
         while (try iter.nextAlloc(allocator, options)) |row| {
             try rows.append(row);
         }
@@ -2260,7 +2260,7 @@ pub fn Statement(comptime opts: StatementOptions, comptime query: anytype) type 
         pub fn all(self: *Self, comptime Type: type, allocator: mem.Allocator, options: QueryOptions, values: anytype) ![]Type {
             var iter = try self.iteratorAlloc(Type, allocator, values);
 
-            var rows = std.ArrayList(Type).init(allocator);
+            var rows = std.array_list.Managed(Type).init(allocator);
             while (try iter.nextAlloc(allocator, options)) |row| {
                 try rows.append(row);
             }
@@ -2679,7 +2679,7 @@ test "sqlite: read a single text value" {
                     .pointer => {
                         try testing.expectEqualStrings("Vincent", name.?);
                     },
-                    .array => |arr| if (arr.sentinel) |sentinel_ptr| {
+                    .array => |arr| if (arr.sentinel_ptr) |sentinel_ptr| {
                         const sentinel = @as(*const arr.child, @ptrCast(sentinel_ptr)).*;
                         const res = mem.sliceTo(&name.?, sentinel);
                         try testing.expectEqualStrings("Vincent", res);
@@ -2793,11 +2793,11 @@ test "sqlite: read a single value into an enum backed by a string" {
     var stmt: StatementType(.{}, query) = try db.prepare(query);
     defer stmt.deinit();
 
-    const b = try stmt.oneAlloc(TestUser.Color, allocator, .{}, .{
+    const b = try stmt.oneAlloc(TestUser.color, allocator, .{}, .{
         .id = @as(usize, 10),
     });
     try testing.expect(b != null);
-    try testing.expectEqual(TestUser.Color.violet, b.?);
+    try testing.expectEqual(TestUser.color.violet, b.?);
 }
 
 test "sqlite: read a single value into void" {
@@ -3024,7 +3024,7 @@ test "sqlite: statement iterator" {
     var stmt = try db.prepare("INSERT INTO user(name, id, age, weight, favorite_color) VALUES(?{[]const u8}, ?{usize}, ?{usize}, ?{f32}, ?{[]const u8})");
     defer stmt.deinit();
 
-    var expected_rows = std.ArrayList(TestUser).init(allocator);
+    var expected_rows = std.array_list.Managed(TestUser).init(allocator);
     var i: usize = 0;
     while (i < 20) : (i += 1) {
         const name = try std.fmt.allocPrint(allocator, "Vincent {d}", .{i});
@@ -3051,7 +3051,7 @@ test "sqlite: statement iterator" {
 
         var iter = try stmt2.iterator(RowType, .{});
 
-        var rows = std.ArrayList(RowType).init(allocator);
+        var rows = std.array_list.Managed(RowType).init(allocator);
         while (try iter.next(.{})) |row| {
             try rows.append(row);
         }
@@ -3078,7 +3078,7 @@ test "sqlite: statement iterator" {
 
         var iter = try stmt2.iterator(RowType, .{});
 
-        var rows = std.ArrayList(RowType).init(allocator);
+        var rows = std.array_list.Managed(RowType).init(allocator);
         while (try iter.nextAlloc(allocator, .{})) |row| {
             try rows.append(row);
         }
@@ -3462,7 +3462,7 @@ test "sqlite: bind runtime slice" {
     const allocator = arena.allocator();
 
     // creating array list on heap so that it's deemed runtime size
-    var list = std.ArrayList([]const u8).init(allocator);
+    var list = std.array_list.Managed([]const u8).init(allocator);
     defer list.deinit();
     try list.append("this is some data");
     const args = try list.toOwnedSlice();
@@ -3879,7 +3879,7 @@ test "sqlite: empty slice" {
     defer db.deinit();
     try addTestData(&db);
 
-    var list = std.ArrayList(u8).init(arena.allocator());
+    var list = std.array_list.Managed(u8).init(arena.allocator());
     const ptr = try list.toOwnedSlice();
 
     try db.exec("INSERT INTO article(author_id, data) VALUES(?, ?)", .{}, .{ 1, ptr });
