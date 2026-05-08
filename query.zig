@@ -32,11 +32,12 @@ pub fn ParsedQuery(comptime tmp_query: []const u8) type {
         const Self = @This();
 
         const result = parse();
+        pub const query = result.query[0..result.query_len].*;
 
         pub const bind_markers = result.bind_markers[0..result.bind_markers_len];
 
         pub fn getQuery() []const u8 {
-            return Self.result.query[0..Self.result.query_len];
+            return &Self.query;
         }
 
         const ParsedQueryResult = struct {
@@ -49,7 +50,7 @@ pub fn ParsedQuery(comptime tmp_query: []const u8) type {
         fn parse() ParsedQueryResult {
             // This contains the final SQL query after parsing with our
             // own typed bind markers removed.
-            var buf: [tmp_query.len]u8 = undefined;
+            var buf: [tmp_query.len]u8 = [_]u8{0} ** tmp_query.len;
             var pos = 0;
             var state = .start;
 
@@ -58,11 +59,11 @@ pub fn ParsedQuery(comptime tmp_query: []const u8) type {
             // string we're exiting from
             var string_starting_character: u8 = undefined;
 
-            var current_bind_marker_type: [256]u8 = undefined;
+            var current_bind_marker_type: [256]u8 = [_]u8{0} ** 256;
             var current_bind_marker_type_pos = 0;
 
             // becomes part of our result
-            var tmp_bind_markers: [128]BindMarker = undefined;
+            var tmp_bind_markers: [128]BindMarker = [_]BindMarker{.{}} ** 128;
             var nb_tmp_bind_markers: usize = 0;
 
             // used for capturing slices, such as bind parameter name
@@ -166,11 +167,7 @@ pub fn ParsedQuery(comptime tmp_query: []const u8) type {
                             // Handles optional types
                             const typ = if (type_info_string[0] == '?') blk: {
                                 const child_type = ParseType(type_info_string[1..]);
-                                break :blk @Type(std.builtin.Type{
-                                    .optional = .{
-                                        .child = child_type,
-                                    },
-                                });
+                                break :blk ?child_type;
                             } else blk: {
                                 break :blk ParseType(type_info_string);
                             };
@@ -227,14 +224,12 @@ fn ParseType(comptime type_info: []const u8) type {
     if (mem.eql(u8, "isize", type_info)) return isize;
 
     if (type_info[0] == 'u' or type_info[0] == 'i') {
-        return @Type(std.builtin.Type{
-            .int = std.builtin.Type.Int{
-                .signedness = if (type_info[0] == 'i') .signed else .unsigned,
-                .bits = std.fmt.parseInt(usize, type_info[1..type_info.len], 10) catch {
-                    @compileError("invalid type info " ++ type_info);
-                },
+        return @Int(
+            if (type_info[0] == 'i') .signed else .unsigned,
+            std.fmt.parseInt(usize, type_info[1..type_info.len], 10) catch {
+                @compileError("invalid type info " ++ type_info);
             },
-        });
+        );
     }
 
     // Float

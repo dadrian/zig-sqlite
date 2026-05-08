@@ -121,15 +121,15 @@ fn makeSQLiteLib(b: *std.Build, dep: *std.Build.Dependency, c_flags: []const []c
         .root_module = mod,
     });
 
-    lib.addIncludePath(dep.path("."));
-    lib.addIncludePath(b.path("c"));
+    lib.root_module.addIncludePath(dep.path("."));
+    lib.root_module.addIncludePath(b.path("c"));
     if (sqlite_c == .with) {
-        lib.addCSourceFile(.{
+        lib.root_module.addCSourceFile(.{
             .file = dep.path("sqlite3.c"),
             .flags = c_flags,
         });
     }
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("c/workaround.c"),
         .flags = c_flags,
     });
@@ -154,7 +154,7 @@ pub fn build(b: *std.Build) !void {
 
     // Define C flags to use
 
-    var flags: std.ArrayList([]const u8) = .{};
+    var flags: std.ArrayList([]const u8) = .empty;
     defer flags.deinit(b.allocator);
     try flags.append(b.allocator, "-std=c99");
 
@@ -242,9 +242,9 @@ pub fn build(b: *std.Build) !void {
             .name = test_name,
             .root_module = mod,
         });
-        tests.addIncludePath(b.path("c"));
-        tests.addIncludePath(sqlite_dep.path("."));
-        tests.linkLibrary(test_sqlite_lib);
+        tests.root_module.addIncludePath(b.path("c"));
+        tests.root_module.addIncludePath(sqlite_dep.path("."));
+        tests.root_module.linkLibrary(test_sqlite_lib);
 
         const tests_options = b.addOptions();
         tests.root_module.addImport("build_options", tests_options.createModule());
@@ -374,7 +374,7 @@ const PreprocessStep = struct {
         const loadable_sqlite3_h = try ps.target.path(owner, "loadable-ext-sqlite3.h").getPath3(owner, step).toString(owner.allocator);
         const loadable_sqlite3ext_h = try ps.target.path(owner, "loadable-ext-sqlite3ext.h").getPath3(owner, step).toString(owner.allocator);
 
-        try Preprocessor.sqlite3(owner.allocator, sqlite3_h, loadable_sqlite3_h);
-        try Preprocessor.sqlite3ext(owner.allocator, sqlite3ext_h, loadable_sqlite3ext_h);
+        try Preprocessor.sqlite3(owner.graph.io, owner.allocator, sqlite3_h, loadable_sqlite3_h);
+        try Preprocessor.sqlite3ext(owner.graph.io, owner.allocator, sqlite3ext_h, loadable_sqlite3ext_h);
     }
 };
